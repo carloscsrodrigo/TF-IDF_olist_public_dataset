@@ -1,0 +1,145 @@
+#importando biblioteca pandas
+#import pandas library
+import pandas as pd
+import numpy as np
+
+pip install unidecode
+
+#importando biblioteca NLTK para uso de NPL
+#import NLTK library for NPL use
+import nltk
+from nltk.corpus import stopwords
+from nltk.tokenize import word_tokenize
+from nltk.tokenize.treebank import TreebankWordDetokenizer
+from sklearn.feature_extraction.text import CountVectorizer, TfidfTransformer
+from sklearn.metrics import pairwise_distances
+## bibliotecas para estatísticas etc...
+## libraries for statistics etc...
+import matplotlib.pyplot as plt
+import altair as alt
+from unidecode import unidecode
+import seaborn as sns
+import re
+from sklearn.preprocessing import MinMaxScaler, StandardScaler
+
+nltk.download('stopwords')
+nltk.download('punkt')
+
+df = pd.read_csv('olist_order_reviews_dataset.csv')
+df.head()
+
+df.describe(include='object')
+
+df.dropna(subset=['review_comment_title', 'review_comment_message'], inplace=True)
+df.describe(include='object')
+
+df.head()
+
+df['input'] = df.review_comment_title + ', ' + df.review_comment_message
+df.head()
+
+#selecionando as "stopwords" portuguesa
+#selecting the Portuguese "stopwords"
+list_stop = stopwords.words("portuguese")
+print(list_stop[:10])
+
+corpus = df['input'].copy()
+preprocessed_corpus = []
+
+for abstract in corpus:
+    
+    #Removendo todos os carcateres espciais
+    #Removing all special characters
+    document = re.sub(r'\W', ' ', str(abstract))
+    
+    #remove all single characters
+    document = re.sub(r'\s+[a-zA-Z]\s+', ' ', document)
+    
+    #Remove carcateres soltos do começo
+    #Remove single characters from the beginning
+    document = re.sub(r'\^[a-zA-Z]\s+', ' ', document) 
+    
+    #Substituindo vários espaços por um único espaço
+    #Replacing multiple spaces with a single space
+    document = re.sub(r'\s+', ' ', document, flags=re.I)
+    
+    #Removendo o prefixo 'b'
+    #Removing the 'b' prefixed
+    document = re.sub(r'^b\s+', '', document)
+    
+    #converter para maisculo
+    #convert to uppercase
+    document = document.lower()
+    
+    #Normaliza
+    #Normalize
+    document = unidecode(document)
+    document = document.split()
+    document = [word for word in document if word not in list_stop and word.isalpha()]
+    document = " ".join(document)
+    
+    preprocessed_corpus.append(document)
+    
+print(len(corpus))
+print(len(preprocessed_corpus))
+
+preprocessed_corpus[3]
+
+count_vect = CountVectorizer(stop_words=list_stop)
+count_vect.fit(preprocessed_corpus)
+
+print('Tamanho do vocabulário: ', len(count_vect.vocabulary_))
+
+X = count_vect.transform(preprocessed_corpus)
+
+tfidf_transformer = TfidfTransformer()
+X_tfidf = tfidf_transformer.fit_transform(X)
+
+tfidf_df = pd.DataFrame(X_tfidf.toarray(), index=df['review_score'], columns=count_vect.get_feature_names_out())
+tfidf_df
+
+tfidf_df = tfidf_df.groupby("review_score").mean()
+tfidf_df
+
+tfidf_df = tfidf_df.stack().reset_index()
+tfidf_df.head()
+
+tfidf_df = tfidf_df.rename(columns={0:'TFIDF', 'review_score': 'Score','level_1': 'Term'})
+tfidf_df
+
+top_tfidf = tfidf_df.sort_values(by=['Score','TFIDF'], ascending=[True,False]).groupby(['Score']).head(3)
+top_tfidf.head()
+
+#adicionando um pouco de aleatoriedade para desempatar no ranking de mandatos
+#adding a little randomness to break ties in term ranking
+top_tfidf_plusRand = top_tfidf.copy()
+top_tfidf_plusRand['TFIDF'] = top_tfidf_plusRand['TFIDF'] + np.random.rand(top_tfidf.shape[0])*0.0001
+
+#base para todas as visualizações, com cálculo de classificação
+#base for all visualizations, with rank calculation
+base = alt.Chart(top_tfidf_plusRand,title="TF-IDF Method - olist dataset").encode(
+    x = 'rank:O',
+    y = 'Score:N'
+).transform_window(
+    rank = "rank()",
+    sort = [alt.SortField("TFIDF", order="descending")],
+    groupby = ["Score"],
+)
+
+#especificação do mapa de calor
+#heatmap specification
+heatmap = base.mark_rect().encode(
+    color = 'TFIDF:Q'
+)
+
+# text labels, white for darker heatmap colors
+text = base.mark_text(baseline='middle').encode(
+    text = 'Term:N',
+    color = alt.condition(alt.datum.TFIDF >= 0.1, alt.value('white'), alt.value('black'))
+)
+
+#exibe as três visualizações sobrepostas
+#display the three superimposed visualizations
+(heatmap + text).properties(width = 800)
+
+#this exercise was implementation use Google Colab
